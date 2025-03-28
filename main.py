@@ -7,10 +7,10 @@ import shlex
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPlainTextEdit, QLabel, QFileDialog, QListWidget,
-    QSplitter, QMessageBox, QAction, QMenuBar, QLineEdit
+    QSplitter, QMessageBox, QAction, QMenuBar, QLineEdit, QPushButton
 )
 from PyQt5.QtCore import Qt, QProcess, QIODevice, QByteArray
-from highlighter import PythonHighlighter
+from highlighter import PythonHighlighter, CHighlighter, DummyHighlighter
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -59,7 +59,32 @@ class MainWindow(QMainWindow):
         editor_widget = QWidget()
         editor_widget.setLayout(editor_layout)
 
-        # PWD label
+        # Syntax toggle button
+        self.syntax_toggle = QPushButton("✓ Syntax Highlighting")
+        self.syntax_toggle.setCheckable(True)
+        self.syntax_toggle.setChecked(True)
+        self.syntax_toggle.setStyleSheet("""
+            QPushButton {
+                background-color: #6272a4;
+                color: white;
+                font-weight: bold;
+                border: none;
+                padding: 4px;
+            }
+            QPushButton:checked {
+                background-color: #50fa7b;
+                color: black;
+            }
+        """)
+        self.syntax_toggle.clicked.connect(self.toggle_syntax)
+
+        label_layout = QHBoxLayout()
+        label_layout.addWidget(self.label)
+        label_layout.addStretch()
+        label_layout.addWidget(self.syntax_toggle)
+        editor_layout.addLayout(label_layout)
+
+        # PWD label and Close button layout
         self.pwd_label = QLabel(f"PWD: {os.getcwd()}")
         self.pwd_label.setStyleSheet("""
             color: #50fa7b;
@@ -68,6 +93,26 @@ class MainWindow(QMainWindow):
             padding: 5px;
         """)
 
+        self.close_terminal = QPushButton("x")
+        self.close_terminal.setFixedWidth(25)
+        self.close_terminal.setStyleSheet("""
+            QPushButton {
+                background-color: #ff5555;
+                color: white;
+                border: none;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #ff4444;
+            }
+        """)
+        self.close_terminal.clicked.connect(self.toggle_terminal)
+
+        pwd_layout = QHBoxLayout()
+        pwd_layout.addWidget(self.pwd_label)
+        pwd_layout.addStretch()
+        pwd_layout.addWidget(self.close_terminal)
+
         # Terminal widget setup
         self.terminal = QPlainTextEdit()
         self.terminal.setReadOnly(True)
@@ -75,7 +120,7 @@ class MainWindow(QMainWindow):
         self.terminal_input.returnPressed.connect(self.execute_command)
 
         terminal_layout = QVBoxLayout()
-        terminal_layout.addWidget(self.pwd_label)
+        terminal_layout.addLayout(pwd_layout)
         terminal_layout.addWidget(self.terminal)
         terminal_layout.addWidget(self.terminal_input)
 
@@ -115,18 +160,29 @@ class MainWindow(QMainWindow):
         menu_bar = QMenuBar(self)
         file_menu = menu_bar.addMenu("File")
         terminal_menu = menu_bar.addMenu("Terminal")
+        help_menu = menu_bar.addMenu("Help")
 
         save_action = QAction("Save Note", self)
+        save_action.setShortcut("Ctrl+S")
         save_action.triggered.connect(self.save_note)
 
         load_action = QAction("Load Note", self)
+        load_action.setShortcut("Ctrl+O")
         load_action.triggered.connect(self.load_note)
 
         new_file_action = QAction("New File", self)
+        new_file_action.setShortcut("Ctrl+N")
         new_file_action.triggered.connect(self.new_file)
 
         terminal_action = QAction("Open Terminal", self)
+        terminal_action.setShortcut("Ctrl+T")
         terminal_action.triggered.connect(self.toggle_terminal)
+
+        # Help bar
+        help_action = QAction("Show shortcuts", self)
+        help_action.setShortcut("Ctrl+H")
+        help_action.triggered.connect(self.show_shortcuts) 
+        help_menu.addAction(help_action)
 
         file_menu.addAction(save_action)
         file_menu.addAction(load_action)
@@ -152,9 +208,12 @@ class MainWindow(QMainWindow):
 
     def toggle_terminal(self):
         if self.terminal_widget.isVisible():
+            self.last_splitter_sizes = self.vertical_splitter_sizes()
             self.terminal_widget.hide()
         else:
             self.terminal_widget.show()
+            if hasattr(self, "last_splitter_sizes"):
+                self.vertical_splitter.setSizes(self.last_splitter_sizes)
 
     def execute_command(self):
         command = self.terminal_input.text()
@@ -199,12 +258,22 @@ class MainWindow(QMainWindow):
         self.process = None
 
     def save_note(self):
+
+        if self.current_file:
+            with open(self.current_file, 'w') as f:
+                f.write(self.text_edit.toPlainText())
+            self.label.setText(Path(self.current_file).name)
+            return
+
         suggested_filename = f"note_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.txt"
+        options = QFileDialog.Options()
+        options |= QFileDialog.DontUseNativeDialog
         file_path, _ = QFileDialog.getSaveFileName(
             self, 
             "Save Note", 
             str(Path(self.default_save_load_path) / suggested_filename), 
-            "Text Files (*.txt)"
+            "All Files (*);;C/C++ Files (*.c *.cpp *.h);;Python Files (*.py);;Text Files (*.txt)",
+            options=options
         )
         if file_path:
             with open(file_path, 'w') as f:
@@ -213,12 +282,52 @@ class MainWindow(QMainWindow):
             self.label.setText(Path(file_path).name)
 
     def load_note(self):
-        file_path, _ = QFileDialog.getOpenFileName(self, "Open Note", self.default_save_load_path, "Text Files (*.txt)")
+        options = QFileDialog.Options()
+        options |= QFileDialog.DontUseNativeDialog
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, 
+            "Open Note", 
+            self.default_save_load_path, 
+            "All Files (*);;C/C++ Files (*.c *.cpp *.h);;Python Files (*.py);;Text Files (*.txt)",
+            options=options
+        )
         if file_path:
             with open(file_path, 'r') as f:
                 self.text_edit.setPlainText(f.read())
             self.current_file = file_path 
             self.label.setText(Path(file_path).name)
+            self.toggle_syntax()
+
+    def show_shortcuts(self):
+        shortcuts = [
+            "Ctrl+S — Save Note",
+            "Ctrl+O — Load Note",
+            "Ctrl+N — New File",
+            "Ctrl+H — Show Shortcuts",
+            "Ctrl+T — Toggle Terminal",
+        ]
+        QMessageBox.information(
+            self,
+            "Keyboard Shortcuts",
+            "\n".join(shortcuts)
+        )
+
+    def toggle_syntax(self):
+        if not self.syntax_toggle.isChecked():
+            self.highlighter = DummyHighlighter(self.text_edit.document())
+            return
+
+        if self.current_file:
+            file_ext = Path(self.current_file).suffix.lower()
+        else:
+            file_ext = ''
+
+        if file_ext in [".py"]:
+            self.highlighter = PythonHighlighter(self.text_edit.document())
+        elif file_ext in [".c", ".cpp", ".h"]:
+            self.highlighter = CHighlighter(self.text_edit.document())
+        else:
+            self.highlighter = DummyHighlighter(self.text_edit.document())
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
@@ -242,6 +351,25 @@ if __name__ == "__main__":
         }
         QMenu::item:selected {
             background-color: #6272a4;
+        }
+        QFileDialog {
+            background-color: #282a36;
+            color: #f8f8f2;
+        }
+        QPushButton {
+            background-color: #282a36;
+            color: #f8f8f2;
+            border: none;
+            padding: 5px;
+        }
+        QPushButton:hover {
+            background-color: #7080d0;
+        }
+        QListView, QTreeView {
+            background-color: #1e1f29;
+            color: #f8f8f2;
+            selection-background-color: #44475a;
+            selection-color: #f8f8f2;
         }
     """)
 
