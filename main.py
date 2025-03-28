@@ -69,9 +69,9 @@ class MainWindow(QMainWindow):
 
         self.label = QLabel("Untitled")
         self.current_file = None
+
+        # Create the first text edit when initializing
         self.text_edit = CodeEditor()
-        self.text_edit.setPlaceholderText("Start typing your note here...")
-        PythonHighlighter(self.text_edit.document())
         self.text_edit.setStyleSheet("""
             QPlainTextEdit {
                 background-color: #282a36;
@@ -259,7 +259,8 @@ class MainWindow(QMainWindow):
         self.sidebar.setVisible(self.toggle_sidebar_btn.isChecked())
 
     def new_file(self):
-        if self.text_edit.toPlainText():
+        current_editor = self.tabs.currentWidget()
+        if current_editor and current_editor.toPlainText():
             reply = QMessageBox.question(
                 self,
                 "Confirm",
@@ -269,9 +270,15 @@ class MainWindow(QMainWindow):
             )
             if reply == QMessageBox.No:
                 return
-        self.text_edit.clear()
+
+        editor = CodeEditor()
+        editor.setPlaceholderText("Start typing your note here...")
+        editor.setProperty("file_path", None)
+        PythonHighlighter(editor.document())
+
+        index = self.tabs.addTab(editor, "Untitled")
+        self.tabs.setCurrentIndex(index)
         self.label.setText("Untitled")
-        self.current_file = None
 
     def toggle_terminal(self):
         if self.terminal_widget.isVisible():
@@ -325,51 +332,65 @@ class MainWindow(QMainWindow):
         self.process = None
 
     def save_note(self):
-        editor = self.tabs.currentWidget() 
+            editor = self.text_edit
+            if not editor:
+                return
 
-        if editor is None:
-            return 
+            file_path = self.current_file
+            content = editor.toPlainText()
 
-        current_file = editor.property("file_path") 
+            if not file_path:
+                timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+                suggested_filename = f"note_{timestamp}.txt"
+                options = QFileDialog.Options()
+                options |= QFileDialog.DontUseNativeDialog
 
-        if current_file:
-            with open(current_file, 'w') as f:
-                f.write(editor.toPlainText())
-            self.label.setText(Path(current_file).name) 
-            return
+                file_path, _ = QFileDialog.getSaveFileName(
+                    self,
+                    "Save Note",
+                    str(Path(self.default_save_load_path) / suggested_filename),
+                    "All Files (*);;Text Files (*.txt);;Python Files (*.py);;C/C++ Files (*.c *.cpp *.h)",
+                    options=options
+                )
 
-        # If there's no file path (unsaved file), prompt to save
-        suggested_filename = f"note_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.txt"
-        options = QFileDialog.Options()
-        options |= QFileDialog.DontUseNativeDialog
-        file_path, _ = QFileDialog.getSaveFileName(
-            self, 
-            "Save Note", 
-            str(Path(self.default_save_load_path) / suggested_filename), 
-            "All Files (*);;Text Files (*.txt);;Python Files (*.py);;C/C++ Files (*.c *.cpp *.h)",
-            options=options
-        )
-        if file_path:
-            with open(file_path, 'w') as f:
-                f.write(editor.toPlainText()) 
-            editor.setProperty("file_path", file_path) 
-            self.label.setText(Path(file_path).name) 
+                if not file_path:
+                    return
 
+                self.current_file = file_path
+
+            try:
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    f.write(content)
+
+                self.label.setText(Path(file_path).name)
+                editor.document().setModified(False)
+
+            except Exception as e:
+                QMessageBox.critical(self, "Error Saving File", str(e))
 
     def load_note(self):
         options = QFileDialog.Options()
         options |= QFileDialog.DontUseNativeDialog
+
         file_path, _ = QFileDialog.getOpenFileName(
-            self, 
-            "Open Note", 
-            self.default_save_load_path, 
+            self,
+            "Open Note",
+            self.default_save_load_path,
             "All Files (*);;C/C++ Files (*.c *.cpp *.h);;Python Files (*.py);;Text Files (*.txt)",
             options=options
         )
+
         if file_path:
-            with open(file_path, 'r') as f:
-                self.text_edit.setPlainText(f.read())
-            self.current_file = file_path 
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+
+            editor = CodeEditor()
+            editor.setPlainText(content)
+            editor.setProperty("file_path", file_path)
+            PythonHighlighter(editor.document())
+
+            index = self.tabs.addTab(editor, Path(file_path).name)
+            self.tabs.setCurrentIndex(index)
             self.label.setText(Path(file_path).name)
             self.toggle_syntax()
 
